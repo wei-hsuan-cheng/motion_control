@@ -499,8 +499,10 @@ private:
 
     // const double max_lin = 0.3; // [m/s]
     // const double max_ang = M_PI / 2.0; // [rad/s]
-    const double max_lin = 5.0; // [m/s]
-    const double max_ang = M_PI / 1.0; // [rad/s]
+    // const double max_lin = 5.0; // [m/s]
+    // const double max_ang = M_PI / 1.0; // [rad/s]
+    double max_lin = 1.0;              // [m]
+    double max_ang = 0.5 * M_PI;              // [rad/s]
     Vector6d nu; // 6
     
     nu.head<3>() = saturate(twist_e_cmd_.head<3>(), max_lin);

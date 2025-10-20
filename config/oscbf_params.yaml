@@ -1,0 +1,9 @@
+task_space_motion_control_oscbf:
+  ros__parameters:
+    oscbf.eps: 1.0e-2
+    oscbf.alpha_gain: 1.0e1
+    oscbf.slack_rho: 1.0e12
+    oscbf.slack_max: 1.0e-1
+    oscbf.obj_scale: 1.0e0
+    oscbf.wj_scalar: 1.0e0
+    oscbf.wo_scalar: 1.0e0

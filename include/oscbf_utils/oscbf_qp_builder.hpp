@@ -3,7 +3,7 @@
 #include "qp_solver/iqpsolver.hpp"
 #include "oscbf_utils/oscbf_params.hpp"
 
-// Kinematic OSCBF (singularity avoidance) QP builder.
+// Kinematic OSCBF (singularity avoidance) minimal QP builder.
 // Decision x = [ qdot(n); t(1) ]
 // Objective: ||Wj N(q)(qdot - qdot_nom)||^2 + ||Wo J(q)(qdot - qdot_nom)||^2 + rho * t
 // CBF: (∇µ)^T qdot  >= -α(h(q)) - t    with  h(q)=µ(q)-ε,  t∈[0,slack_max]
@@ -14,10 +14,8 @@ public:
   QPProblem build(const Eigen::MatrixXd& J,
                   const Eigen::MatrixXd& N,           // null projector (I - J^+ J)
                   const Eigen::VectorXd& qdot_nom,    // nominal joint vel
-                  const Eigen::VectorXd& q,           // joints
                   const Eigen::VectorXd& grad_mu,     // ∇µ(q)  (size n)
-                  double mu,                          // µ(q)
-                  const Eigen::MatrixXd& joint_limits // n x 4: [ll, ul, |qd|, effort]
+                  double mu                           // µ(q)
                  ) const
   {
     const int n  = (int)J.cols();
@@ -47,10 +45,10 @@ public:
     prob.Aeq.resize(0, nv);
     prob.beq.resize(0);
 
-    // ----- Inequalities: [ CBF ; damper(2n) ]
+    // ----- Inequalities: only CBF -----
     // CBF row on x=[qdot; t]:  [ grad_mu^T   ,  1 ] * [qdot; t]  >= -α(µ-ε)
-    // Convert to OSQP's <= form later; here we keep native, then stack below.
-    const int mi = 1 + 2*n;             // 1 CBF + 2n damper rows
+    // We encode as <=: -grad^T qdot - t <= α(h)
+    const int mi = 1;             // 1 CBF row
     prob.Aineq.setZero(mi, nv);
     prob.bineq.setZero(mi);
 
@@ -62,43 +60,9 @@ public:
     prob.Aineq(0, n) = -1.0;                          // -t
     prob.bineq(0) = rhs;
 
-    // Velocity damper near joint limits: two per joint
-    // lower:  -qdot_i <= rhs_lower   upper:  +qdot_i <= rhs_upper
-    const bool have_limits = (joint_limits.rows()==n && joint_limits.cols()>=2);
-    for (int i=0;i<n;++i) {
-      const int rL = 1 + 2*i;
-      const int rU = 1 + 2*i + 1;
-      prob.Aineq(rL, i) = -1.0;
-      prob.Aineq(rU, i) = +1.0;
-
-      double rhs_lower = 1e30, rhs_upper = 1e30;
-      if (have_limits && P_.use_joint_limit_damper) {
-        const double ll = joint_limits(i,0), ul = joint_limits(i,1);
-        const double d_ll = q(i) - ll, d_ul = ul - q(i);
-        auto rhs_damper = [&](double rho){
-          if (rho < P_.rho_i) return P_.eta * ((rho - P_.rho_s) / (P_.rho_i - P_.rho_s));
-          return 1e30;
-        };
-        rhs_lower = rhs_damper(d_ll);
-        rhs_upper = rhs_damper(d_ul);
-      }
-      prob.bineq(rL) = rhs_lower;
-      prob.bineq(rU) = rhs_upper;
-    }
-
     // ----- Bounds on variables -----
     prob.lb = Eigen::VectorXd::Constant(nv, -std::numeric_limits<double>::infinity());
     prob.ub = Eigen::VectorXd::Constant(nv,  std::numeric_limits<double>::infinity());
-
-    // Joint velocity bounds
-    if (joint_limits.rows()==n && joint_limits.cols()>=3) {
-      Eigen::VectorXd v = joint_limits.col(2).cwiseAbs();
-      prob.lb.head(n) = -v;
-      prob.ub.head(n) =  v;
-    } else if (P_.qd_min.size()==n && P_.qd_max.size()==n) {
-      prob.lb.head(n) = P_.qd_min;
-      prob.ub.head(n) = P_.qd_max;
-    }
 
     // Slack bounds
     prob.lb(n) = 0.0;

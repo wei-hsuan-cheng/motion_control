@@ -10,17 +10,18 @@
 #include <chrono>
 #include <limits>
 #include <memory>
+#include <algorithm>
+#include <cmath>
 
 // Existing QP infra
 #include "qp_solver/iqpsolver.hpp"
-#include "qp_solver/osqp_solver.hpp"
-
-// New OSCBF bits
+#include "oscbf_utils/osqp_solver_oscbf.hpp"
 #include "oscbf_utils/oscbf_params.hpp"
 #include "oscbf_utils/oscbf_qp_builder.hpp"
 
 using RM = RMUtils;
 using std::placeholders::_1;
+using HighResClock = std::chrono::high_resolution_clock;
 
 class TaskSpaceMotionControlOSCBF : public rclcpp::Node {
 public:
@@ -54,13 +55,14 @@ private:
 
     // OSCBF params (override at runtime if you want)
     declare_parameter<double>("oscbf.eps",        1e-3);
-    declare_parameter<double>("oscbf.alpha_gain", 10.0);
+    declare_parameter<double>("oscbf.alpha_gain", 1e1);
     declare_parameter<double>("oscbf.slack_rho",  1e6);
     declare_parameter<double>("oscbf.slack_max",  1e3);
-    declare_parameter<double>("oscbf.eta",        0.8);
-    declare_parameter<double>("oscbf.rho_i_deg",  30.0);
-    declare_parameter<double>("oscbf.rho_s_deg",  5.0);
     declare_parameter<double>("oscbf.obj_scale",  1.0);
+    // Uniform diagonal weights (scalars)
+    declare_parameter<double>("oscbf.wj_scalar",  1.0);
+    declare_parameter<double>("oscbf.wo_scalar",  1.0);
+    // Minimal OSCBF: no limit toggles or dynamic Wo scaling
   }
 
   void initRobotConfig(){
@@ -134,9 +136,9 @@ private:
 
   void initOSCBF(){
     // OSQP solver
-    solver_ = std::make_unique<OsqpSolver>();
-    static_cast<OsqpSolver*>(solver_.get())->setVerbose(false);
-    static_cast<OsqpSolver*>(solver_.get())->setMaxIter(4000);
+    solver_ = std::make_unique<OsqpSolverOscbf>();
+    static_cast<OsqpSolverOscbf*>(solver_.get())->setVerbose(false);
+    static_cast<OsqpSolverOscbf*>(solver_.get())->setMaxIter(4000);
 
     // params
     double rho_i_deg, rho_s_deg;
@@ -144,16 +146,18 @@ private:
     get_parameter("oscbf.alpha_gain", P_.alpha_gain);
     get_parameter("oscbf.slack_rho",  P_.slack_rho);
     get_parameter("oscbf.slack_max",  P_.slack_max);
-    get_parameter("oscbf.eta",        P_.eta);
-    get_parameter("oscbf.rho_i_deg",  rho_i_deg);
-    get_parameter("oscbf.rho_s_deg",  rho_s_deg);
     get_parameter("oscbf.obj_scale",  P_.objective_scale);
-    P_.rho_i = rho_i_deg * RMUtils::d2r;
-    P_.rho_s = rho_s_deg * RMUtils::d2r;
-    Eigen::VectorXd Wj_diag = Eigen::VectorXd::Ones(n_); // uniform joint weights
-    Eigen::VectorXd Wo_diag = Eigen::VectorXd::Ones(6); // uniform operational weights
-    P_.Wj_diag = Wj_diag;
-    P_.Wo_diag = Wo_diag * 1e2;
+    get_parameter("oscbf.wj_scalar", wj_scalar_base_);
+    get_parameter("oscbf.wo_scalar", wo_scalar_base_);
+    P_.Wj_diag = Eigen::VectorXd::Constant(n_, wj_scalar_base_);
+    P_.Wo_diag = Eigen::VectorXd::Constant(6,  wo_scalar_base_);
+
+    // log params
+    RCLCPP_INFO(get_logger(), "[OSCBF params]:\n eps=%.3e\n alpha_gain=%.3e\n slack_rho=%.3e\n slack_max=%.3e\n obj_scale=%.3e\n Wj_scalar=%.3e\n Wo_scalar=%.3e",
+                P_.eps, P_.alpha_gain, P_.slack_rho, P_.slack_max,
+                P_.objective_scale,
+                wj_scalar_base_, wo_scalar_base_);
+
   }
 
   void initROS(){
@@ -166,6 +170,13 @@ private:
     timer_ = create_wall_timer(
       std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::duration<double>(Ts_)),
       std::bind(&TaskSpaceMotionControlOSCBF::onTimer, this));
+  }
+
+  // Helpers
+  // Per-call timing helper
+  static inline double elapsedUs(const HighResClock::time_point& t0,
+                                const HighResClock::time_point& t1) {
+      return std::chrono::duration<double, std::micro>(t1 - t0).count();
   }
 
   // ---------- Callbacks ----------
@@ -208,35 +219,49 @@ private:
     auto sat = [](const Eigen::Vector3d& v, double lim) {
     double n=v.norm(); return (n>lim && n>1e-12) ? (v*(lim/n)).eval() : v;
     };
-    double max_lin = 5.0;              // [m]
-    double max_ang = 1.0 * M_PI;              // [rad/s]
+    double max_lin = 1.0;              // [m]
+    double max_ang = 0.5 * M_PI;              // [rad/s]
     nu.head<3>() = sat(nu.head<3>(), max_lin);
     nu.tail<3>() = sat(nu.tail<3>(), max_ang);
 
-    // 2) Nominal qdot: q̇_nom = J^+ ν + N q̇_null  (here q̇_null=0)
-    const auto& J = rk_->jacob();
+    auto t0 = HighResClock::now();
+    // 2) Nominal qdot: q̇_nom = J^+ ν + N q̇_null; here q̇_null= (1/λ) (I_n - J^+J)∇μ
     double lambda_dls = 5e-2;
-    Eigen::MatrixXd Jpinv = rk_->JacobPinvDLS(J, lambda_dls);
-    Eigen::MatrixXd N = Eigen::MatrixXd::Identity(n_,n_) - Jpinv * J;
-    Eigen::VectorXd qdot_nom = Jpinv * nu; // no null task for this example
+    // double lambda_dls = 0.0;
+    Eigen::MatrixXd Jpinv = rk_->JacobPinvDLS(rk_->jacob(), lambda_dls);
 
-    // 3) Build OSCBF QP
-    // μ and its gradient (use your fast utilities)
-    double mu = rk_->manipulability();                 // Yoshikawa μ
-    Eigen::VectorXd grad_mu = rk_->ManipulabilityGradient(q_, 1e-6);
+    double lambda = 1.0e0; // Secondary objective gain
+    Eigen::MatrixXd N = Eigen::MatrixXd::Identity(n_,n_) - Jpinv * rk_->jacob();
+    Eigen::VectorXd qdot_nom = Jpinv * nu + (1 / lambda) * N * rk_->manipulability_gradient(); // velocity components for primary + secondary objetives
+    // Eigen::VectorXd qdot_nom = Jpinv * nu; // velocity components for primary objetive only
+
+    // 3) Build OSCBF QP (minimal)
+    // Compute μ and ∇μ once and reuse
+    const double mu_now = rk_->manipulability();
+    const Eigen::VectorXd grad_now = rk_->manipulability_gradient();
+    P_.Wo_diag = Eigen::VectorXd::Constant(6, wo_scalar_base_);
 
     OSCBFQPBuilder builder(P_);
-    QPProblem prob = builder.build(J, N, qdot_nom, q_, grad_mu, mu, joint_limits_);
+    QPProblem prob = builder.build(rk_->jacob(),
+                                   N,
+                                   qdot_nom,
+                                   grad_now,
+                                   mu_now);
 
     // 4) Solve
     QPResult sol = solver_->solve(prob);
     if (!sol.ok || sol.x.size() != n_+1) {
       // Safety fallback: stick to nominal within bounds
       qd_cmd_ = qdot_nom.cwiseMax(prob.lb.head(n_)).cwiseMin(prob.ub.head(n_));
-      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "[OSCBF] QP failed → using bounded nominal.");
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "\n========================\n[OSCBF] QP failed → using bounded nominal.\n========================");
     } else {
       qd_cmd_ = sol.x.head(n_);
     }
+
+    auto t1 = HighResClock::now();
+    double us = elapsedUs(t0, t1);
+    // RCLCPP_INFO(get_logger(), "[OSCBF] Solve time/rate: %.3f [us] / %.1f [Hz]", us, 1e6/us);
+
 
     // 5) Publish
     sensor_msgs::msg::JointState js;
@@ -246,9 +271,28 @@ private:
     pub_qd_->publish(js);
 
     // log
-    if (logTick(2.0)) {
-      RCLCPP_INFO(get_logger(), "[OSCBF] mu=%.3e, h=%.3e, |qd|=%.3f",
-                  mu, mu-P_.eps, qd_cmd_.norm());
+    if (logTick(0.5)) {
+      const double h_now  = mu_now - P_.eps;
+      const double t_val = (sol.ok && sol.x.size()==n_+1) ? sol.x(n_) : 0.0;
+      const double lhs   = grad_now.dot(qd_cmd_) + t_val;           // native CBF LHS (>= rhs)
+      const double rhs   = -P_.alpha_gain * h_now;                  // native CBF RHS
+      const double v_n = (rk_->jacob() * qd_cmd_).head<3>().norm();
+      const double omg_n = (rk_->jacob() * qd_cmd_).tail<3>().norm();
+      RCLCPP_INFO(get_logger(), "[OSCBF] μ=%.3e, h=%.3e, |qd|=%.3f, |v|=%.3f, |omg|=%.3f, lhs=%.3e, rhs=%.3e, (lhs - rhs) / |rhs| =%.3e",
+                  mu_now, h_now, qd_cmd_.norm(), v_n, omg_n, lhs, rhs, (lhs - rhs) / std::abs(rhs));
+
+      // Print the desired twist v.s. optimized twist and twist error
+      Eigen::VectorXd twist_opt = rk_->jacob() * qd_cmd_;
+      Eigen::VectorXd twist_err = nu - twist_opt;
+      RCLCPP_INFO(get_logger(), "[OSCBF] desired twist: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]^T",
+                  nu(0), nu(1), nu(2), nu(3), nu(4), nu(5));
+      RCLCPP_INFO(get_logger(), "[OSCBF] optimized twist: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]^T",
+                  twist_opt(0), twist_opt(1), twist_opt(2),
+                  twist_opt(3), twist_opt(4), twist_opt(5));
+      RCLCPP_INFO(get_logger(), "[OSCBF] twist error:   [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]^T",
+                  twist_err(0), twist_err(1), twist_err(2),
+                  twist_err(3), twist_err(4), twist_err(5));
+
     }
   }
 
@@ -277,6 +321,9 @@ private:
   // oscbf
   std::unique_ptr<IQPSolver> solver_;
   OSCBFParams P_;
+  // uniform weight scalars (diagonal)
+  double wj_scalar_base_{1.0};
+  double wo_scalar_base_{1.0};
 
   // ros
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr sub_pose_cmd_;

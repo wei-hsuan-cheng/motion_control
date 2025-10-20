@@ -85,6 +85,20 @@ target_include_directories(osqp_solver
     $<INSTALL_INTERFACE:include>
 )
 
+add_library(osqp_solver_oscbf STATIC
+  src/osqp_solver_oscbf.cpp
+)
+target_link_libraries(osqp_solver_oscbf
+  PUBLIC
+    ${OSQP_TARGET}
+)
+target_include_directories(osqp_solver_oscbf
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+
+
 # Add executables
 add_executable(robot_joint_dynamics ${ROBOT_JOINT_DYNAMICS_SOURCES})
 add_executable(task_space_motion_control ${TASK_SPACE_MOTION_CONTROL_SOURCES})
@@ -100,11 +114,12 @@ ament_target_dependencies(task_space_motion_control_oscbf ${dependencies})
 ament_target_dependencies(task_space_motion_control_rrmc ${dependencies})
 
 target_link_libraries(task_space_motion_control osqp_solver)
-target_link_libraries(task_space_motion_control_oscbf osqp_solver)
+target_link_libraries(task_space_motion_control_oscbf osqp_solver_oscbf)
 
 # Install targets
 install(TARGETS
   osqp_solver
+  osqp_solver_oscbf
   robot_joint_dynamics
   task_space_motion_control
   motion_reference_generator

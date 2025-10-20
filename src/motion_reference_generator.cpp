@@ -308,7 +308,7 @@ public:
   {
     // Time varying pose command
     // double r = 0.175; // [m]
-    double r = 0.3; // [m]
+    double r = 0.15; // [m]
     // double offset_x = r * cos(2.0 * M_PI * f_[0] * t_); // [m]
     double offset_x = r * (1.0 - exp(-f_[0] * t_)); // [m]
     // double offset_x = 0.0; // [m]

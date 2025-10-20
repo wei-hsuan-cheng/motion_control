@@ -150,35 +150,9 @@ def motion_control_spawner(context: LaunchContext) -> List[Node]:
         remappings=[("/pose_command", "/fr3/pose_command"),
                     ("/joint_velocity_command", "/fr3/joint_velocity_command"),],
     )
-    
-    tsmc_oscbf = Node(
-        package="motion_control",
-        executable="task_space_motion_control_oscbf",
-        name="task_space_motion_control_oscbf",
-        output="screen",
-        parameters=[_load_screw_list_params(fr3_yaml),
-                    initial_cfg_path,
-                    {"fs": 200.0}],
-        remappings=[("/pose_command", "/fr3/pose_command"),
-                    ("/joint_velocity_command", "/fr3/joint_velocity_command"),],
-    )
-    
-    tsmc_rrmc = Node(
-        package="motion_control",
-        executable="task_space_motion_control_rrmc",
-        name="task_space_motion_control_rrmc",
-        output="screen",
-        parameters=[_load_screw_list_params(fr3_yaml),
-                    initial_cfg_path,
-                    {"fs": 200.0}],
-        remappings=[("/pose_command", "/fr3/pose_command"),
-                    ("/joint_velocity_command", "/fr3/joint_velocity_command"),],
-    )
 
     return [
-            # tsmc, 
-            tsmc_oscbf,
-            # tsmc_rrmc,
+            tsmc, 
             ]
 
 def robot_joint_dynamics_spawner(context: LaunchContext) -> List[Node]:

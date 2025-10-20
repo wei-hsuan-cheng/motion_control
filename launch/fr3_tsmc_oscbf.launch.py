@@ -24,6 +24,12 @@ initial_cfg_path = os.path.join(
     "config", "fr3_initial_configuration.yaml"
 )
 
+# OSCBF parameters YAML
+oscbf_params_path = os.path.join(
+    get_package_share_directory("motion_control"),
+    "config", "oscbf_params.yaml"
+)
+
 motion_params = {
     "pos_x_cmd": 0.69, # 0.69
     "pos_y_cmd": 0.000, # 0.0
@@ -35,10 +41,10 @@ motion_params = {
     
     "offset_rad": [0.0],
     "amplitude_rad": [0.35],
-    "frequency_hz": [0.2], # 0.05
+    "frequency_hz": [0.1], # 0.05
     "phase_rad": [0.0],
 }
-    
+
 def _load_yaml_dict(path: str) -> dict:
     with open(path, "r") as f:
         data = yaml.safe_load(f) or {}
@@ -139,18 +145,6 @@ def motion_reference_generator_spawner(context: LaunchContext) -> List[Node]:
 
 def motion_control_spawner(context: LaunchContext) -> List[Node]:
     # Task Space Motion Control
-    tsmc = Node(
-        package="motion_control",
-        executable="task_space_motion_control",
-        name="task_space_motion_control",
-        output="screen",
-        parameters=[_load_screw_list_params(fr3_yaml),
-                    initial_cfg_path,
-                    {"fs": 200.0}],
-        remappings=[("/pose_command", "/fr3/pose_command"),
-                    ("/joint_velocity_command", "/fr3/joint_velocity_command"),],
-    )
-    
     tsmc_oscbf = Node(
         package="motion_control",
         executable="task_space_motion_control_oscbf",
@@ -158,27 +152,14 @@ def motion_control_spawner(context: LaunchContext) -> List[Node]:
         output="screen",
         parameters=[_load_screw_list_params(fr3_yaml),
                     initial_cfg_path,
-                    {"fs": 200.0}],
-        remappings=[("/pose_command", "/fr3/pose_command"),
-                    ("/joint_velocity_command", "/fr3/joint_velocity_command"),],
-    )
-    
-    tsmc_rrmc = Node(
-        package="motion_control",
-        executable="task_space_motion_control_rrmc",
-        name="task_space_motion_control_rrmc",
-        output="screen",
-        parameters=[_load_screw_list_params(fr3_yaml),
-                    initial_cfg_path,
+                    oscbf_params_path,
                     {"fs": 200.0}],
         remappings=[("/pose_command", "/fr3/pose_command"),
                     ("/joint_velocity_command", "/fr3/joint_velocity_command"),],
     )
 
     return [
-            # tsmc, 
             tsmc_oscbf,
-            # tsmc_rrmc,
             ]
 
 def robot_joint_dynamics_spawner(context: LaunchContext) -> List[Node]:
