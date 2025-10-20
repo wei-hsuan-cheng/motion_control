@@ -1,0 +1,69 @@
+# initial_configuration.yaml
+motion_reference_generator:
+  ros__parameters:
+
+    initial_joint_position:
+      # fr3
+      # fr3_joint1: 0.0
+      # fr3_joint2: 0.0
+      # fr3_joint3: 0.0
+      # fr3_joint4: -1.59695
+      # fr3_joint5: 0.0
+      # fr3_joint6: 2.5307
+      # fr3_joint7: 0.0
+
+      fr3_joint1: -0.012459622876601748
+      fr3_joint2: 0.2963489674797737
+      fr3_joint3: 0.021009119323968196
+      fr3_joint4: -2.1967676969645997
+      fr3_joint5: 0.03370583038312492
+      fr3_joint6: 3.426798845544522
+      fr3_joint7: -0.03292363656202997
+
+
+    initial_joint_velocity:
+      # fr3
+      fr3_joint1: 0.0
+      fr3_joint2: 0.0
+      fr3_joint3: 0.0
+      fr3_joint4: 0.0
+      fr3_joint5: 0.0
+      fr3_joint6: 0.0
+      fr3_joint7: 0.0
+
+    initial_gripper_position:
+      # fr3
+      fr3_finger_joint1: 0.02 # max: 0.04
+
+
+robot_joint_dynamics:
+  ros__parameters:
+
+    initial_joint_position:
+      # fr3
+      # fr3_joint1: 0.0
+      # fr3_joint2: 0.0
+      # fr3_joint3: 0.0
+      # fr3_joint4: -1.59695
+      # fr3_joint5: 0.0
+      # fr3_joint6: 2.5307
+      # fr3_joint7: 0.0
+
+      fr3_joint1: -0.012459622876601748
+      fr3_joint2: 0.2963489674797737
+      fr3_joint3: 0.021009119323968196
+      fr3_joint4: -2.1967676969645997
+      fr3_joint5: 0.03370583038312492
+      fr3_joint6: 3.426798845544522
+      fr3_joint7: -0.03292363656202997
+      
+
+    initial_joint_velocity:
+      # fr3
+      fr3_joint1: 0.0
+      fr3_joint2: 0.0
+      fr3_joint3: 0.0
+      fr3_joint4: 0.0
+      fr3_joint5: 0.0
+      fr3_joint6: 0.0
+      fr3_joint7: 0.0
