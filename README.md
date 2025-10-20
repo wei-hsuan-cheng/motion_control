@@ -16,7 +16,7 @@ colcon build --symlink-install --packages-select motion_control && . install/set
 - Task space motion
     ```bash
     # Simulate robot motion control (first-order dynamics in each joint velocity)
-    ros2 launch motion_control task_space_motion_control.launch.py
+    ros2 launch motion_control fr3_task_space_motion_control.launch.py
     ```
 
 <!-- - Robot visualization in RViz2
